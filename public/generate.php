@@ -100,36 +100,35 @@ try {
     $project = normalize_utf8_array($project);
     $job     = normalize_utf8_array($job);
 
-    // Base vars
+    // Base vars from DB
     $vars = PlaceholderResolver::resolve($project, $job);
 
-    // Parse ${ort} and overlay
+    // Parse using ORT + PROJEKTDETAILS
     require_once $ROOT . '/lib/ai.php';
-    $rawOrt = $job['ort'] ?? ($project['ort'] ?? '');
-    $parsed = parse_ort_to_fields($rawOrt);
+    $rawOrt  = $job['ort'] ?? ($project['ort'] ?? '');
+    $rawProj = $project['projektdetails'] ?? ($job['projektdetails'] ?? '');
+    $parsed  = parse_ort_to_fields($rawOrt, $rawProj);
 
-    // Address/contact placeholders from parser
-    foreach ($parsed as $k => $v) {
-        if (is_string($v) && $v !== '' && $k !== 'motiv') {
-            $vars[$k] = $v;
+    // Overwrite with parsed values (external contact, address, farbraum, technik__)
+    foreach (['addresse','Ansprechpartnerin','Ansprechpartnerin_tel','Ansprechpartnerin_mail','farbraum','technik__'] as $k) {
+        if (!empty($parsed[$k]) && is_string($parsed[$k])) {
+            $vars[$k] = $parsed[$k];
         }
     }
 
-    // Force ${ort} from parser's motiv; if empty, use sanitized fallback (no phones/emails)
+    // Build clean one-liner for ${ort} from parser's “motiv” (fallback = sanitized raw)
     $clean = (string)($parsed['motiv'] ?? '');
     if ($clean === '') {
         $s = $rawOrt;
-        $s = preg_replace('/\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/i', '', $s);             // strip emails
-        $s = preg_replace('/\b(Tel\.?|Telefon|Phone|Mob\.?|Mobile|Handy)\s*[:\-]?\s*/iu', '', $s); // strip labels
-        $s = preg_replace('/\+?\d[\d\-\s().]{6,}/u', '', $s);                                      // strip phones
-        $s = preg_replace('/\s+/u', ' ', trim($s));                                                // collapse WS
+        $s = preg_replace('/\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/i', '', $s);
+        $s = preg_replace('/\b(Tel\.?|Telefon|Phone|Mob\.?|Mobile|Handy)\s*[:\-]?\s*/iu', '', $s);
+        $s = preg_replace('/\+?\d[\d\-\s().]{6,}/u', '', $s);
+        $s = preg_replace('/\s+/u', ' ', trim($s));
         $clean = mb_substr($s, 0, 120, 'UTF-8');
     }
-    // single-line “motiv/ort” text
     $clean = preg_replace('/\s*[\r\n]+\s*/u', ', ', trim($clean));
-    $vars['ort']   = $clean;   // <-- final value used in DOCX
-    $vars['motiv'] = $clean;   // if your template also contains ${motiv}, keep both in sync
-
+    $vars['ort']   = $clean;
+    $vars['motiv'] = $clean; // keep in sync if the template uses ${motiv}
 
 
     $service = new DocxService($ROOT . '/templates/doc_template.docx');

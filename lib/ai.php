@@ -21,10 +21,10 @@ final class OpenAIClient {
         $schema = [
             'type' => 'object',
             'properties' => [
-                // NEW: one-line text for the Motiv/Ort field in the document
+                // Motiv/Ort one-liner for the document
                 'motiv' => ['type' => 'string'],
 
-                // Existing structured fields
+                // Address/contact
                 'address' => ['type'=>'string'],
                 'postal_code' => ['type'=>'string'],
                 'city' => ['type'=>'string'],
@@ -42,23 +42,29 @@ final class OpenAIClient {
                     ]
                 ],
                 'phones' => ['type'=>'array','items'=>['type'=>'string']],
-                'emails' => ['type'=>'array','items'=>['type'=>'string']]
+                'emails' => ['type'=>'array','items'=>['type'=>'string']],
+
+                // NEW: color space + gear from projektdetails/ort
+                'farbraum'  => ['type'=>'string'],   // e.g., "sRGB", "Adobe RGB (1998)", "CMYK"
+                'technik__' => ['type'=>'string'],   // concise German list, e.g., "2× Kamera, Gimbal, 3× LED, Tonangel"
             ],
             'required' => []
         ];
 
-        $raw = (string)($samples['text'] ?? '');
+        $rawOrt  = (string)($samples['ort'] ?? '');
+        $rawProj = (string)($samples['projektdetails'] ?? '');
 
-        $system = 'Du extrahierst aus deutschsprachigem Freitext strukturierte Kontakt- und Ortsdaten '
-                . 'für eine Dispositionsdatei. Liefere AUSSCHLIESSLICH ein einzelnes JSON-Objekt, '
-                . 'das dem Schema entspricht. Das Feld "motiv" ist eine kurze, saubere, gut lesbare '
-                . 'Orts-/Motiv-Zeile (max. 120 Zeichen, Deutsch), OHNE Telefonnummern, E-Mails, '
-                . 'Personennamen oder Labels wie "Tel:", "Kontakt:".';
+        $system = 'Du extrahierst aus deutschsprachigem Freitext strukturierte Orts-, Kontakt- und Produktionsangaben '
+                . 'für eine Dispositionsdatei. Gib AUSSCHLIESSLICH ein einzelnes JSON-Objekt, das dem Schema entspricht. '
+                . '„motiv“: kurze, saubere Einzeile (max. 120 Zeichen) zum Ort/Motiv, OHNE Telefonnummern/E-Mails/Labels. '
+                . '„farbraum“: typischer Farb-/Farbraumhinweis (z. B. sRGB, Adobe RGB, CMYK) – leer lassen, wenn nicht vorhanden. '
+                . '„technik__“: knappe, kommagetrennte deutsche Auflistung der benötigten Technik/Geräte – leer lassen, wenn unklar. '
+                . '„contacts“ sind NUR EXTERNE Ansprechpartner (Kunde/Location), KEINE internen Teammitglieder.';
 
         $user = "Schema (JSON Schema):\n"
               . json_encode($schema, JSON_UNESCAPED_UNICODE)
-              . "\n\nText:\n"
-              . $raw;
+              . "\n\nORT:\n" . $rawOrt
+              . "\n\nPROJEKTDETAILS:\n" . $rawProj;
 
         $body = [
             'model' => $this->model,
@@ -88,7 +94,6 @@ final class OpenAIClient {
 
         $json = json_decode($resp, true);
 
-        // Extract model text
         $text = null;
         if (isset($json['output_text'])) {
             $text = $json['output_text'];
@@ -100,13 +105,9 @@ final class OpenAIClient {
             $text = is_string($resp) ? $resp : json_encode($json);
         }
 
-        // Parse first JSON object
         $payload = self::firstJsonObject($text);
         return is_array($payload) ? $payload : [];
     }
-
-
-
 
     /** Extract the first top-level JSON object from arbitrary text safely. */
     private static function firstJsonObject(string $s): ?array {
@@ -132,12 +133,13 @@ final class OpenAIClient {
     }
 }
 /** Convenience wrapper: parse the ${ort} text into structured fields. */
-function parse_ort_to_fields(string $raw): array {
-    $raw = mb_convert_encoding($raw, 'UTF-8', 'Windows-1252,ISO-8859-1,ISO-8859-15,latin1,UTF-8');
+function parse_ort_to_fields(string $rawOrt, string $projDetails): array {
+    $rawOrt      = mb_convert_encoding($rawOrt, 'UTF-8', 'Windows-1252,ISO-8859-1,ISO-8859-15,latin1,UTF-8');
+    $projDetails = mb_convert_encoding($projDetails, 'UTF-8', 'Windows-1252,ISO-8859-1,ISO-8859-15,latin1,UTF-8');
 
     $cfg = require dirname(__DIR__) . '/config/openai.php';
     $cli = new OpenAIClient($cfg);
-    $out = $cli->extractOrt(['text' => $raw]);
+    $out = $cli->extractOrt(['ort' => $rawOrt, 'projektdetails' => $projDetails]);
 
     $address = trim(implode(' ', array_filter([
         $out['address'] ?? '',
@@ -157,15 +159,18 @@ function parse_ort_to_fields(string $raw): array {
         $primary['phone'] = (string)(($out['phones'][0] ?? '') ?: '');
     }
 
-    // NEW: motiv text (clean, short one-liner for ${ort})
-    $motiv = trim((string)($out['motiv'] ?? ''));
+    $motiv    = trim((string)($out['motiv'] ?? ''));
+    $farbraum = trim((string)($out['farbraum'] ?? ''));
+    $technik  = trim((string)($out['technik__'] ?? ''));
 
     return [
         'addresse'               => $address,
         'Ansprechpartnerin'      => $primary['name'],
         'Ansprechpartnerin_mail' => $primary['email'],
         'Ansprechpartnerin_tel'  => $primary['phone'],
-        'motiv'                  => $motiv,   // expose motiv for debugging/alternative mapping
+        'motiv'                  => $motiv,
+        'farbraum'               => $farbraum,
+        'technik__'              => $technik,
         '_parsed_raw'            => $out
     ];
 }
