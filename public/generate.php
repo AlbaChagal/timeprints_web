@@ -29,6 +29,7 @@ require_once $ROOT . '/lib/db.php';
 require_once $ROOT . '/lib/placeholders.php';
 require_once $ROOT . '/lib/docx.php';
 require_once $ROOT . '/lib/encoding.php';
+require_once dirname(__DIR__) . '/lib/weather.php';
 
 $config = require $ROOT . '/config/config.php';
 
@@ -129,6 +130,107 @@ try {
     $clean = preg_replace('/\s*[\r\n]+\s*/u', ', ', trim($clean));
     $vars['ort']   = $clean;
     $vars['motiv'] = $clean; // keep in sync if the template uses ${motiv}
+
+    // ---------- Weather injection ----------
+    $pt = [
+        'lat' => null,
+        'lon' => null,
+    ];
+
+    // If you already parse coordinates from DB/Ort, keep that here:
+    if (!empty($vars['lat']) && !empty($vars['lon'])) {
+        $pt['lat'] = (float)$vars['lat'];
+        $pt['lon'] = (float)$vars['lon'];
+    } elseif (!empty($job['lat']) && !empty($job['lon'])) {
+        $pt['lat'] = (float)$job['lat'];
+        $pt['lon'] = (float)$job['lon'];
+    }
+
+    // Hard fallback to Berlin if still missing
+    if (empty($pt['lat']) || empty($pt['lon'])) {
+        $pt['lat'] = 52.5200;
+        $pt['lon'] = 13.4050;
+    }
+
+
+    // Use Berlin tz (matches your workflow)
+    $tz = new DateTimeZone('Europe/Berlin');
+
+    // Resolve the target date from your vars / DB
+    $whenDateStr = $vars['datum']
+        ?: (isset($job['datum']) ? date('Y-m-d', strtotime($job['datum'])) : date('Y-m-d'));
+
+    $startHHMM = $vars['start'] ?: ($vars['uhrzeit_beginn'] ?? '');
+    $endHHMM   = $vars['end']   ?: ($vars['uhrzeit_ende']   ?? '');
+
+    // Build DateTime objects
+    try {
+        $target = new DateTime($whenDateStr, $tz);
+    } catch (Throwable $e) {
+        $target = new DateTime('today', $tz);
+    }
+    $today   = new DateTime('today', $tz);
+
+    // If target is in the past → use tomorrow's forecast for the same location
+    if ($target < $today) {
+        $target = new DateTime('tomorrow', $tz);
+    }
+
+    $wx = [];
+    if (!empty($pt['lat']) && !empty($pt['lon'])) {
+        // Always fetch for the (possibly adjusted) target date
+        $wx = fetch_forecast(
+            (float)$pt['lat'],
+            (float)$pt['lon'],
+            $target->format('Y-m-d'),
+            $startHHMM ?: null,
+            $endHHMM   ?: null
+        );
+    }
+
+    // Overlay placeholders used by your template
+    foreach (['hoch','tief','wind','sonne_max','regen%'] as $k) {
+        if (!empty($wx[$k])) {
+            $vars[$k] = $wx[$k];
+        } else {
+            // Ensure placeholders never leak through
+            if (!isset($vars[$k])) $vars[$k] = '';
+        }
+    }
+
+    $tz = new DateTimeZone('Europe/Berlin');
+
+    $whenDateStr = $vars['datum']
+        ?: (isset($job['datum']) ? date('Y-m-d', strtotime($job['datum'])) : date('Y-m-d'));
+
+    $startHHMM = $vars['start'] ?: ($vars['uhrzeit_beginn'] ?? '');
+    $endHHMM   = $vars['end']   ?: ($vars['uhrzeit_ende']   ?? '');
+
+    try {
+        $target = new DateTime($whenDateStr, $tz);
+    } catch (Throwable $e) {
+        $target = new DateTime('today', $tz);
+    }
+    $today = new DateTime('today', $tz);
+
+    // Past date → use tomorrow
+    if ($target < $today) {
+        $target = new DateTime('tomorrow', $tz);
+    }
+
+    $wx = fetch_forecast(
+        (float)$pt['lat'],
+        (float)$pt['lon'],
+        $target->format('Y-m-d'),
+        $startHHMM ?: null,
+        $endHHMM   ?: null
+    );
+
+    // Overlay with guaranteed keys, no placeholder leakage
+    foreach (['hoch','tief','wind','sonne_max','regen%'] as $k) {
+        $vars[$k] = !empty($wx[$k]) ? $wx[$k] : '';
+    }
+
 
 
     $service = new DocxService($ROOT . '/templates/doc_template.docx');
