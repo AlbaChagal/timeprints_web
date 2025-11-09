@@ -54,12 +54,14 @@ button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;background:#0
   const jobSelect = document.getElementById('job_id');
   const jobFilter = document.getElementById('job_filter');
   const submitBtn = document.getElementById('submit_btn');
+  const jobHelp = document.getElementById('job_help');
 
-  let cache = [];       // raw rows for filtering
+  let cache = [];
   let debounce = null;
 
+  function msg(text){ jobHelp.textContent = text; }
+
   function optionLabel(row){
-    // label: "#ID jobnummer | datum beg–end | ort"
     const id = row.id ?? '';
     const num = row.jobnummer ?? '';
     const dt  = row.datum ?? '';
@@ -84,6 +86,7 @@ button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;background:#0
     jobSelect.disabled = rows.length === 0;
     jobFilter.disabled = rows.length === 0;
     submitBtn.disabled = rows.length === 0 || !jobSelect.value;
+    msg(rows.length ? `Gefundene Jobs: ${rows.length}` : 'Keine Jobs für dieses Projekt gefunden');
   }
 
   function applyFilter(){
@@ -102,21 +105,28 @@ button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;background:#0
     jobSelect.disabled = true;
     jobFilter.disabled = true;
     submitBtn.disabled = true;
+    msg('Lade…');
 
     fetch('jobs_by_project.php?project_id=' + encodeURIComponent(pid), {credentials:'same-origin'})
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP '+r.status)))
+      .then(r => r.json()) // always parse JSON; endpoint always returns JSON
       .then(data => {
-        cache = (data && Array.isArray(data.items)) ? data.items : [];
-        populate(cache);
-      })
-      .catch(err => {
-        jobSelect.innerHTML = '<option value="">Fehler beim Laden</option>';
+      if (data.error) {
+        console.error('Endpoint error:', data.error, data.tried || []);
+        msg('Fehler: ' + data.error);
         cache = [];
-        jobSelect.disabled = true;
-        jobFilter.disabled = true;
-        submitBtn.disabled = true;
-        console.error(err);
-      });
+        populate(cache);
+        return;
+      }
+      if (data.tried) {
+        const picked = (data.tried.find(x => x.count > 0) || {}).fk || '—';
+        const summary = data.tried.map(x => `${x.fk}:${x.count}`).join(', ');
+        console.log('FK probe:', summary, 'picked:', picked);
+        msg((data.items?.length || 0) ? `Gefundene Jobs: ${data.items.length} (FK=${picked})` : `Keine Jobs gefunden (Probe: ${summary})`);
+      }
+      cache = Array.isArray(data.items) ? data.items : [];
+      populate(cache);
+    })
+;
   }
 
   pidInput.addEventListener('input', () => {
@@ -127,14 +137,11 @@ button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;background:#0
       return;
     }
     clearTimeout(debounce);
-    debounce = setTimeout(() => fetchJobs(pid), 250);
+    debounce = setTimeout(() => fetchJobs(pid), 200);
   });
 
   jobFilter.addEventListener('input', applyFilter);
-
-  jobSelect.addEventListener('change', () => {
-    submitBtn.disabled = !jobSelect.value;
-  });
+  jobSelect.addEventListener('change', () => { submitBtn.disabled = !jobSelect.value; });
 })();
 </script>
 </body>

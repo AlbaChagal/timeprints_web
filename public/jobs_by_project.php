@@ -1,41 +1,85 @@
 <?php
 declare(strict_types=1);
 
-// Do NOT echo PHP warnings/notices (they break JSON)
-ini_set('display_errors','0');
-error_reporting(E_ALL & ~E_DEPRECATED & ~E_WARNING & ~E_NOTICE);
+// TEMP: show errors to browser to catch fatals; revert to 0 after fix
+ini_set('display_errors','1');
+error_reporting(E_ALL);
 
 header('Content-Type: application/json; charset=UTF-8');
 
-require_once __DIR__ . '/../lib/db.php';
+// Trap any output/notice that would corrupt JSON
+ob_start();
 
-// latin1→UTF-8 for a single row
-function _norm(array $row): array {
-    foreach ($row as $k => $v) {
-        if (is_string($v)) {
-            $row[$k] = mb_convert_encoding($v, 'UTF-8', 'Windows-1252,ISO-8859-1,ISO-8859-15,latin1,UTF-8');
-        }
-    }
-    return $row;
-}
+$out = ['items'=>[]];
 
 try {
-    $config = require __DIR__ . '/../config/config.php';
+    require_once __DIR__ . '/../lib/db.php';
+
+    $cfg = require __DIR__ . '/../config/config.php';
     $pid = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
     if ($pid <= 0) {
-        http_response_code(400);
-        echo json_encode(['error' => 'invalid project_id']);
+        $out['error'] = 'invalid project_id';
+        $buf = ob_get_clean();
+        if ($buf) $out['debug'] = $buf;
+        echo json_encode($out, JSON_UNESCAPED_UNICODE);
         exit;
     }
 
-    $db = new DB($config);
-    $items = $db->listJobsByProject($pid); // new robust method below
+    $db = new DB($cfg);
 
-    // Normalize encoding per row
-    $items = array_map('_norm', $items);
+    // Try likely FK names until we get rows; do not DESCRIBE
+    $cands = ['projekt_id','project_id','projekte_id','projekt','projektID','projektid','projekt_nr','projektnummer'];
+    $items = [];
+    $probe = [];
+    foreach ($cands as $fk) {
+        $sql = "SELECT id,
+                       IFNULL(jobnummer,'') AS jobnummer,
+                       IFNULL(datum,'') AS datum,
+                       IFNULL(uhrzeit_beginn,'') AS uhrzeit_beginn,
+                       IFNULL(uhrzeit_ende,'') AS uhrzeit_ende,
+                       IFNULL(ort,'') AS ort
+                FROM `{$cfg['table_jobs']}`
+                WHERE `{$fk}` = :pid
+                ORDER BY id ASC";
+        try {
+            // Access PDO without reflection: add a getter if you prefer; inline quick access here:
+            $rp = new ReflectionClass($db);
+            $p  = $rp->getProperty('pdo');
+            $p->setAccessible(true);
+            /** @var PDO $pdo */
+            $pdo = $p->getValue($db);
 
-    echo json_encode(['items' => $items], JSON_UNESCAPED_UNICODE);
+            $st = $pdo->prepare($sql);
+            $st->execute([':pid'=>$pid]);
+            $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+            $probe[] = ['fk'=>$fk,'ok'=>true,'count'=>count($rows)];
+            if ($rows) { $items = $rows; break; }
+        } catch (Throwable $e) {
+            // Unknown column → continue; other SQL errors → surface
+            $code = ($e instanceof PDOException && isset($e->errorInfo[1])) ? (int)$e->errorInfo[1] : 0;
+            $probe[] = ['fk'=>$fk,'ok'=>false,'err'=>$code ?: $e->getMessage()];
+            if ($code && $code !== 1054) { throw $e; }
+        }
+    }
+
+    // latin1 -> UTF-8 normalization for safety
+    foreach ($items as &$r) {
+        foreach ($r as $k => $v) {
+            if (is_string($v)) {
+                $r[$k] = mb_convert_encoding($v,'UTF-8','Windows-1252,ISO-8859-1,ISO-8859-15,latin1,UTF-8');
+            }
+        }
+    }
+
+    $out['items'] = $items;
+    $out['tried'] = $probe;
+
 } catch (Throwable $e) {
-    http_response_code(500);
-    echo json_encode(['error' => $e->getMessage()]);
+    $out['error'] = $e->getMessage();
 }
+
+// Flush any stray output into debug so JSON stays valid
+$buf = ob_get_clean();
+if ($buf) $out['debug'] = $buf;
+
+echo json_encode($out, JSON_UNESCAPED_UNICODE);

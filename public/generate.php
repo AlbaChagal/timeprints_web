@@ -1,34 +1,49 @@
 <?php
 declare(strict_types=1);
 
+/* ---------- Runtime hardening ---------- */
+ini_set('display_errors', '0');                 // never leak warnings into binary response
+error_reporting(E_ALL & ~E_DEPRECATED);
+ini_set('zlib.output_compression', '0');        // avoid Safari issues with compressed output
 mb_internal_encoding('UTF-8');
 ini_set('default_charset', 'UTF-8');
-setlocale(LC_ALL, 'de_DE.UTF-8', 'de_DE', 'deu_deu', 'deu', 'de', 'C');
-ini_set('display_errors', '1');
-error_reporting(E_ALL & ~E_DEPRECATED);
+setlocale(LC_ALL, 'de_DE.UTF-8','de_DE','C');
 
-require_once __DIR__ . '/../lib/db.php';
-require_once __DIR__ . '/../lib/placeholders.php';
-require_once __DIR__ . '/../lib/docx.php';
-require_once __DIR__ . '/../lib/encoding.php';
+/* Buffer all output so headers are clean */
+ob_start();
 
-$autoload = __DIR__ . '/../vendor/autoload.php';
-if (file_exists($autoload)) {
-    require_once $autoload;
+/* ---------- Resolve paths ---------- */
+$ROOT = dirname(__DIR__);
+$autoload = $ROOT . '/vendor/autoload.php';
+if (!is_file($autoload)) {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=UTF-8');
+    // flush any buffered notices
+    ob_get_length() && ob_end_clean();
+    echo "Composer autoload not found at: {$autoload}\nRun: composer install";
+    exit;
 }
+require_once $autoload;
 
-$config = require __DIR__ . '/../config/config.php';
+require_once $ROOT . '/lib/db.php';
+require_once $ROOT . '/lib/placeholders.php';
+require_once $ROOT . '/lib/docx.php';
+require_once $ROOT . '/lib/encoding.php';
 
+$config = require $ROOT . '/config/config.php';
+
+/* ---------- Input ---------- */
 $projectId = isset($_POST['project_id']) ? (int)$_POST['project_id'] : 0;
 $jobId     = isset($_POST['job_id']) ? (int)$_POST['job_id'] : 0;
-
 if ($projectId <= 0 || $jobId <= 0) {
     http_response_code(400);
     header('Content-Type: text/plain; charset=UTF-8');
+    ob_get_length() && ob_end_clean();
     echo "Bad input";
     exit;
 }
 
+/* ---------- Run ---------- */
 try {
     $db = new DB($config);
 
@@ -36,6 +51,7 @@ try {
     if (!$project) {
         http_response_code(404);
         header('Content-Type: text/plain; charset=UTF-8');
+        ob_get_length() && ob_end_clean();
         echo "Projekt nicht gefunden: {$projectId}";
         exit;
     }
@@ -44,41 +60,65 @@ try {
     if (!$job) {
         http_response_code(404);
         header('Content-Type: text/plain; charset=UTF-8');
+        ob_get_length() && ob_end_clean();
         echo "Job nicht gefunden: {$jobId}";
         exit;
     }
 
-    // normalize AFTER ensuring we have arrays
+    // latin1 → UTF-8 normalization
     $project = normalize_utf8_array($project);
     $job     = normalize_utf8_array($job);
 
     $vars = PlaceholderResolver::resolve($project, $job);
 
-    $service = new DocxService(__DIR__ . '/../templates/doc_template.docx');
+    $service = new DocxService($ROOT . '/templates/doc_template.docx');
     $outBase = sys_get_temp_dir() . DIRECTORY_SEPARATOR . sprintf('disp_%d_%d_%s', $projectId, $jobId, date('Ymd_His'));
     $pdfPath = $outBase . '.pdf';
 
     $result = $service->build($vars, $pdfPath);
 
+    // Clean ALL buffers before sending headers/body
+    while (ob_get_level() > 0) { ob_end_clean(); }
+
     if ($result['type'] === 'pdf') {
+        $path = $result['path'];
+        if (!is_file($path)) {
+            http_response_code(500);
+            header('Content-Type: text/plain; charset=UTF-8');
+            echo "PDF not found after build.";
+            exit;
+        }
         header('Content-Type: application/pdf');
-        header('Content-Disposition: attachment; filename="' . basename($result['path']) . '"');
-        header('Content-Length: ' . filesize($result['path']));
-        readfile($result['path']);
-        @unlink($result['path']);
-        if (!empty($result['tmpdocx']) && file_exists($result['tmpdocx'])) { @unlink($result['tmpdocx']); }
+        header('Content-Disposition: attachment; filename="'.basename($path).'"');
+        header('Content-Length: ' . filesize($path));
+        $fp = fopen($path, 'rb');
+        fpassthru($fp);
+        fclose($fp);
+        @unlink($path);
+        if (!empty($result['tmpdocx']) && is_file($result['tmpdocx'])) { @unlink($result['tmpdocx']); }
         exit;
     }
 
+    // Fallback: DOCX
     $docx = $result['path'];
+    if (!is_file($docx)) {
+        http_response_code(500);
+        header('Content-Type: text/plain; charset=UTF-8');
+        echo "DOCX not found after build.";
+        exit;
+    }
     header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    header('Content-Disposition: attachment; filename="' . basename($docx) . '"');
+    header('Content-Disposition: attachment; filename="'.basename($docx).'"');
     header('Content-Length: ' . filesize($docx));
-    readfile($docx);
+    $fp = fopen($docx, 'rb');
+    fpassthru($fp);
+    fclose($fp);
     @unlink($docx);
     exit;
 
 } catch (Throwable $e) {
+    // Final safe error
+    while (ob_get_level() > 0) { ob_end_clean(); }
     http_response_code(500);
     header('Content-Type: text/plain; charset=UTF-8');
     echo 'Error: ' . $e->getMessage();

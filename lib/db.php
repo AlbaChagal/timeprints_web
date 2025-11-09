@@ -51,29 +51,46 @@ final class DB {
         return $row ?: null;
     }
 
-    /** Robustly list jobs by project FK without DESCRIBE or schema privileges. */
-    public function listJobsByProject(int $projectId): array {
-        $cols = "id, IFNULL(jobnummer,'') jobnummer, IFNULL(datum,'') datum,
-                 IFNULL(uhrzeit_beginn,'') uhrzeit_beginn, IFNULL(uhrzeit_ende,'') uhrzeit_ende,
-                 IFNULL(ort,'') ort";
+    public function listJobsByProject(int $projectId, array &$debug = []): array {
+    $cols = "id,
+             IFNULL(jobnummer,'') AS jobnummer,
+             IFNULL(datum,'') AS datum,
+             IFNULL(uhrzeit_beginn,'') AS uhrzeit_beginn,
+             IFNULL(uhrzeit_ende,'') AS uhrzeit_ende,
+             IFNULL(ort,'') AS ort";
 
-        // Try common FK names in order; skip on "Unknown column" errors.
-        foreach (['projekt_id','project_id','projekte_id'] as $fk) {
-            $sql = "SELECT {$cols} FROM `{$this->jobsTable}` WHERE `{$fk}` = :pid ORDER BY id ASC";
-            try {
-                $st = $this->pdo->prepare($sql);
-                $st->execute([':pid' => $projectId]);
-                return $st->fetchAll(); // success for existing column
-            } catch (\PDOException $e) {
-                // 1054 = Unknown column
-                if ($e->errorInfo[1] !== 1054) {
-                    throw $e; // real error → bubble up
-                }
-                // else try next candidate
+    // Try likely FK names; accept the first that returns >0 rows.
+    $candidates = [
+        'projekt_id','project_id','projekte_id',
+        'projekt','projektID','projektid',
+        'projekt_nr','projektnummer'
+    ];
+
+    $debug = []; // [['fk'=>..., 'ok'=>bool, 'count'=>int]]
+    foreach ($candidates as $fk) {
+        $sql = "SELECT {$cols}
+                FROM `{$this->jobsTable}`
+                WHERE `{$fk}` = :pid
+                ORDER BY id ASC";
+        try {
+            $st = $this->pdo->prepare($sql);
+            $st->execute([':pid' => $projectId]);
+            $rows = $st->fetchAll();
+            $cnt  = is_array($rows) ? count($rows) : 0;
+            $debug[] = ['fk'=>$fk, 'ok'=>true, 'count'=>$cnt];
+            if ($cnt > 0) {
+                return $rows;
+            }
+        } catch (\PDOException $e) {
+            // 1054 Unknown column → record and continue
+            $debug[] = ['fk'=>$fk, 'ok'=>false, 'count'=>0, 'err'=>$e->errorInfo[1] ?? null];
+            if (($e->errorInfo[1] ?? 0) !== 1054) {
+                // Different SQL error → bubble up
+                throw $e;
             }
         }
-
-        // Last resort: return empty list instead of error
-        return [];
+    }
+    // Nothing matched → empty list
+    return [];
     }
 }
