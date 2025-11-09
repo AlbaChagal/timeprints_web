@@ -69,7 +69,23 @@ try {
     $project = normalize_utf8_array($project);
     $job     = normalize_utf8_array($job);
 
+    // 1) existing vars
     $vars = PlaceholderResolver::resolve($project, $job);
+
+    // 2) parse ${ort} with OpenAI and overlay fields used by your template
+    require_once $ROOT . '/lib/ai.php';
+    $parsed = parse_ort_to_fields($job['ort'] ?? ($project['ort'] ?? ''));
+
+    // Merge: parsed fields should win if non-empty
+    foreach ($parsed as $k => $v) {
+        if (is_string($v) && $v !== '') {
+            $vars[$k] = $v;
+        }
+    }
+
+    // Optional: if your template also uses split placeholders, you can expose these:
+    $vars['ort'] = $job['ort'] ?? ($project['ort'] ?? '');
+
 
     $service = new DocxService($ROOT . '/templates/doc_template.docx');
     $outBase = sys_get_temp_dir() . DIRECTORY_SEPARATOR . sprintf(
