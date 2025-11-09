@@ -76,18 +76,23 @@ button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;background:#0
   }
 
   function populate(rows){
-    jobSelect.innerHTML = '<option value="">— wähle einen Job —</option>';
-    rows.forEach(r=>{
-      const opt = document.createElement('option');
-      opt.value = r.id;
-      opt.textContent = optionLabel(r);
-      jobSelect.appendChild(opt);
-    });
-    jobSelect.disabled = rows.length === 0;
-    jobFilter.disabled = rows.length === 0;
-    submitBtn.disabled = rows.length === 0 || !jobSelect.value;
-    msg(rows.length ? `Gefundene Jobs: ${rows.length}` : 'Keine Jobs für dieses Projekt gefunden');
+  jobSelect.innerHTML = '<option value="">— wähle einen Job —</option>';
+  rows.forEach(r=>{
+    const opt = document.createElement('option');
+    opt.value = r.id;
+    const id  = r.id ?? '';
+    const dt  = r.datum ?? '';
+    const beg = r.uhrzeit_beginn ?? '';
+    const end = r.uhrzeit_ende ?? '';
+    const time = (beg || end) ? (beg + (end ? '–' + end : '')) : '';
+    opt.textContent = `#${id} ${dt} ${time}`.trim();
+    jobSelect.appendChild(opt);
+  });
+  jobSelect.disabled = rows.length === 0;
+  jobFilter.disabled = rows.length === 0;
+  submitBtn.disabled = rows.length === 0 || !jobSelect.value;
   }
+
 
   function applyFilter(){
     const q = jobFilter.value.toLowerCase().trim();
