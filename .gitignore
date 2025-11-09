@@ -1,0 +1,7 @@
+vendor/
+*.log
+*.tmp
+*.pdf
+*.docx
+.idea/
+.DS_Store
