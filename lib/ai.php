@@ -21,6 +21,10 @@ final class OpenAIClient {
         $schema = [
             'type' => 'object',
             'properties' => [
+                // NEW: one-line text for the Motiv/Ort field in the document
+                'motiv' => ['type' => 'string'],
+
+                // Existing structured fields
                 'address' => ['type'=>'string'],
                 'postal_code' => ['type'=>'string'],
                 'city' => ['type'=>'string'],
@@ -45,8 +49,11 @@ final class OpenAIClient {
 
         $raw = (string)($samples['text'] ?? '');
 
-        $system = 'You extract structured contact/location data from messy German venue/job text. '
-                . 'Return ONLY a single JSON object that fits the schema the user provides. No prose.';
+        $system = 'Du extrahierst aus deutschsprachigem Freitext strukturierte Kontakt- und Ortsdaten '
+                . 'für eine Dispositionsdatei. Liefere AUSSCHLIESSLICH ein einzelnes JSON-Objekt, '
+                . 'das dem Schema entspricht. Das Feld "motiv" ist eine kurze, saubere, gut lesbare '
+                . 'Orts-/Motiv-Zeile (max. 120 Zeichen, Deutsch), OHNE Telefonnummern, E-Mails, '
+                . 'Personennamen oder Labels wie "Tel:", "Kontakt:".';
 
         $user = "Schema (JSON Schema):\n"
               . json_encode($schema, JSON_UNESCAPED_UNICODE)
@@ -55,13 +62,11 @@ final class OpenAIClient {
 
         $body = [
             'model' => $this->model,
-            // Responses API: messages-like "input" is valid
             'input' => [
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user',   'content' => $user],
             ],
             'temperature' => 0
-            // intentionally no response_format/response to avoid 400s on changing fields
         ];
 
         $ch = curl_init($this->endpoint);
@@ -76,35 +81,31 @@ final class OpenAIClient {
             CURLOPT_TIMEOUT => $this->timeout,
         ]);
         $resp = curl_exec($ch);
-        if ($resp === false) {
-            throw new \RuntimeException('OpenAI request failed: '.curl_error($ch));
-        }
+        if ($resp === false) throw new \RuntimeException('OpenAI request failed: '.curl_error($ch));
         $code = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
-        if ($code < 200 || $code >= 300) {
-            throw new \RuntimeException('OpenAI HTTP '.$code.': '.$resp);
-        }
+        if ($code < 200 || $code >= 300) throw new \RuntimeException('OpenAI HTTP '.$code.': '.$resp);
 
         $json = json_decode($resp, true);
 
-        // Try common shapes
+        // Extract model text
         $text = null;
         if (isset($json['output_text'])) {
             $text = $json['output_text'];
         } elseif (!empty($json['output'][0]['content'][0]['text'])) {
             $text = $json['output'][0]['content'][0]['text'];
         } elseif (!empty($json['choices'][0]['message']['content'])) {
-            // some gateways proxy Chat Completions
             $text = $json['choices'][0]['message']['content'];
         } else {
-            // last resort: stringify
             $text = is_string($resp) ? $resp : json_encode($json);
         }
 
-        // Extract first JSON object from text
+        // Parse first JSON object
         $payload = self::firstJsonObject($text);
         return is_array($payload) ? $payload : [];
     }
+
+
 
 
     /** Extract the first top-level JSON object from arbitrary text safely. */
@@ -132,14 +133,12 @@ final class OpenAIClient {
 }
 /** Convenience wrapper: parse the ${ort} text into structured fields. */
 function parse_ort_to_fields(string $raw): array {
-    // Normalize likely latin1 → UTF-8 (keeps your pipeline robust)
     $raw = mb_convert_encoding($raw, 'UTF-8', 'Windows-1252,ISO-8859-1,ISO-8859-15,latin1,UTF-8');
 
     $cfg = require dirname(__DIR__) . '/config/openai.php';
     $cli = new OpenAIClient($cfg);
     $out = $cli->extractOrt(['text' => $raw]);
 
-    // Build fields used by your template placeholders
     $address = trim(implode(' ', array_filter([
         $out['address'] ?? '',
         $out['postal_code'] ?? '',
@@ -147,7 +146,6 @@ function parse_ort_to_fields(string $raw): array {
         $out['country'] ?? ''
     ])));
 
-    // Pick a primary contact if available
     $primary = ['name'=>'','email'=>'','phone'=>''];
     if (!empty($out['contacts'][0]) && is_array($out['contacts'][0])) {
         $c0 = $out['contacts'][0];
@@ -155,17 +153,20 @@ function parse_ort_to_fields(string $raw): array {
         $primary['email'] = trim((string)($c0['email'] ?? ''));
         $primary['phone'] = trim((string)($c0['phone'] ?? ''));
     } else {
-        // fallback to first global email/phone if present
         $primary['email'] = (string)(($out['emails'][0] ?? '') ?: '');
         $primary['phone'] = (string)(($out['phones'][0] ?? '') ?: '');
     }
+
+    // NEW: motiv text (clean, short one-liner for ${ort})
+    $motiv = trim((string)($out['motiv'] ?? ''));
 
     return [
         'addresse'               => $address,
         'Ansprechpartnerin'      => $primary['name'],
         'Ansprechpartnerin_mail' => $primary['email'],
         'Ansprechpartnerin_tel'  => $primary['phone'],
-        // keep raw for debugging if needed
+        'motiv'                  => $motiv,   // expose motiv for debugging/alternative mapping
         '_parsed_raw'            => $out
     ];
 }
+

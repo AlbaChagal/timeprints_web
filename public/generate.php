@@ -43,6 +43,37 @@ if ($projectId <= 0 || $jobId <= 0) {
     exit;
 }
 
+// Build a clean ${ort} string from parsed fields, fallback to a sanitized slice of raw
+function buildCleanOrt(array $parsed, string $raw): string {
+    $addr    = trim((string)($parsed['address'] ?? ''));
+    $postal  = trim((string)($parsed['postal_code'] ?? ''));
+    $city    = trim((string)($parsed['city'] ?? ''));
+    $country = trim((string)($parsed['country'] ?? ''));
+
+    // Prefer structured address
+    if ($addr || $postal || $city || $country) {
+        $tail = trim(($postal . ' ' . $city));
+        if ($addr && $tail)   return trim($addr . ' ' . $tail);
+        if ($addr)            return $addr;
+        if ($tail)            return $tail;
+        if ($country)         return $country;
+    }
+
+    // Fallback: sanitize raw — strip emails/phones/labels, collapse whitespace, limit length
+    $s = $raw;
+    // strip email addresses
+    $s = preg_replace('/\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/i', '', $s);
+    // strip phone patterns + leading labels
+    $s = preg_replace('/\b(Tel\.?|Telefon|Phone|Mob\.?|Mobile|Handy)\s*[:\-]?\s*/iu', '', $s);
+    $s = preg_replace('/\+?\d[\d\-\s().]{6,}/u', '', $s);
+    // collapse whitespace & take first sentence/line-ish
+    $s = preg_replace('/\s+/u', ' ', trim($s));
+    $s = mb_substr($s, 0, 160, 'UTF-8'); // keep it short
+    return $s;
+}
+
+
+
 /* ---------- Run ---------- */
 try {
     $db = new DB($config);
@@ -69,22 +100,36 @@ try {
     $project = normalize_utf8_array($project);
     $job     = normalize_utf8_array($job);
 
-    // 1) existing vars
+    // Base vars
     $vars = PlaceholderResolver::resolve($project, $job);
 
-    // 2) parse ${ort} with OpenAI and overlay fields used by your template
+    // Parse ${ort} and overlay
     require_once $ROOT . '/lib/ai.php';
-    $parsed = parse_ort_to_fields($job['ort'] ?? ($project['ort'] ?? ''));
+    $rawOrt = $job['ort'] ?? ($project['ort'] ?? '');
+    $parsed = parse_ort_to_fields($rawOrt);
 
-    // Merge: parsed fields should win if non-empty
+    // Address/contact placeholders from parser
     foreach ($parsed as $k => $v) {
-        if (is_string($v) && $v !== '') {
+        if (is_string($v) && $v !== '' && $k !== 'motiv') {
             $vars[$k] = $v;
         }
     }
 
-    // Optional: if your template also uses split placeholders, you can expose these:
-    $vars['ort'] = $job['ort'] ?? ($project['ort'] ?? '');
+    // Force ${ort} from parser's motiv; if empty, use sanitized fallback (no phones/emails)
+    $clean = (string)($parsed['motiv'] ?? '');
+    if ($clean === '') {
+        $s = $rawOrt;
+        $s = preg_replace('/\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/i', '', $s);             // strip emails
+        $s = preg_replace('/\b(Tel\.?|Telefon|Phone|Mob\.?|Mobile|Handy)\s*[:\-]?\s*/iu', '', $s); // strip labels
+        $s = preg_replace('/\+?\d[\d\-\s().]{6,}/u', '', $s);                                      // strip phones
+        $s = preg_replace('/\s+/u', ' ', trim($s));                                                // collapse WS
+        $clean = mb_substr($s, 0, 120, 'UTF-8');
+    }
+    // single-line “motiv/ort” text
+    $clean = preg_replace('/\s*[\r\n]+\s*/u', ', ', trim($clean));
+    $vars['ort']   = $clean;   // <-- final value used in DOCX
+    $vars['motiv'] = $clean;   // if your template also contains ${motiv}, keep both in sync
+
 
 
     $service = new DocxService($ROOT . '/templates/doc_template.docx');
