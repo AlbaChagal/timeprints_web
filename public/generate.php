@@ -72,10 +72,20 @@ try {
     $vars = PlaceholderResolver::resolve($project, $job);
 
     $service = new DocxService($ROOT . '/templates/doc_template.docx');
-    $outBase = sys_get_temp_dir() . DIRECTORY_SEPARATOR . sprintf('disp_%d_%d_%s', $projectId, $jobId, date('Ymd_His'));
+    $outBase = sys_get_temp_dir() . DIRECTORY_SEPARATOR . sprintf(
+        'disp_%d_%d_%s', $projectId, $jobId, date('Ymd_His')
+    );
     $pdfPath = $outBase . '.pdf';
 
     $result = $service->build($vars, $pdfPath);
+
+    /* --------- build custom filename --------- */
+    $projName = preg_replace('/[^A-Za-z0-9_-]+/', '_',
+        $project['projekttitel'] ?? $project['projektname'] ?? ''
+    );
+    $dateTag  = date('ymd');
+    $baseName = sprintf('dispo_%d_%s_%s', $projectId, $projName, $dateTag);
+    /* ---------------------------------------- */
 
     // Clean ALL buffers before sending headers/body
     while (ob_get_level() > 0) { ob_end_clean(); }
@@ -89,7 +99,7 @@ try {
             exit;
         }
         header('Content-Type: application/pdf');
-        header('Content-Disposition: attachment; filename="'.basename($path).'"');
+        header('Content-Disposition: attachment; filename="'.$baseName.'"');
         header('Content-Length: ' . filesize($path));
         $fp = fopen($path, 'rb');
         fpassthru($fp);
@@ -108,7 +118,7 @@ try {
         exit;
     }
     header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    header('Content-Disposition: attachment; filename="'.basename($docx).'"');
+    header('Content-Disposition: attachment; filename="'.$baseName.'"');
     header('Content-Length: ' . filesize($docx));
     $fp = fopen($docx, 'rb');
     fpassthru($fp);
