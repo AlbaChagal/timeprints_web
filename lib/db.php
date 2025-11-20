@@ -105,6 +105,18 @@ final class DB {
         return [];
     }
 
+    public function getMitarbeiterForJob(int $jobId): array {
+        $sql = "SELECT m.*
+                FROM mitarbeiter_link ml
+                JOIN mitarbeiter m ON m.id = ml.mitarbeiter_id
+                WHERE ml.job_id = :jid
+                ORDER BY m.gewerk, m.vorname, m.name";
+        $st = $this->pdo->prepare($sql);
+        $st->execute([':jid' => $jobId]);
+        return $st->fetchAll() ?: [];
+    }
+
+
     public function getPdo(): \PDO {
         return $this->pdo;
     }

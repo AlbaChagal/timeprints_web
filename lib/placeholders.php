@@ -10,9 +10,15 @@ final class PlaceholderResolver {
             return array_key_exists($key, $row) ? (string)($row[$key] ?? '') : $default;
         };
 
-        // ----- DATE from event (datum_beginn) -----
-        $date = $get($event, 'datum_beginn', '');
-        $normDate = $date ? date('Y-m-d', strtotime($date)) : '';
+        $fmtDate = function($d) {
+            if (!$d) return '';
+            $ts = strtotime($d);
+            return $ts ? date('d.m.Y', $ts) : '';
+        };
+
+        // Always use event date
+        $rawDate = $event['datum_beginn'] ?? '';
+        $datum = $fmtDate($rawDate);
 
         // ----- TIMES from event (normal times only) -----
         $fmtTime = function($t) {
@@ -35,8 +41,8 @@ final class PlaceholderResolver {
             'ort'             => $get($job, 'ort', ''),
 
             // DATE/TIME from event
-            'datum'        => $normDate,
-            'datum_beginn' => $date,
+            'datum'        => $datum,
+            'datum_beginn' => $datum,
             'uhrzeit_beginn' => $uBeg,
             'uhrzeit_ende'   => $uEnd,
 

@@ -127,10 +127,42 @@ try {
     $job     = normalize_utf8_array($job);
     $event   = normalize_utf8_array($event);
 
-    $vars = PlaceholderResolver::resolve($project, $job); // <-- keep this if resolver still takes 2 args
-
     // Base vars from DB
     $vars = PlaceholderResolver::resolve($project, $job, $event);
+
+        // ---------- Kontakte Team from mitarbeiter_link ----------
+    $team = $db->getMitarbeiterForJob($jobId);
+    $team = array_map('normalize_utf8_array', $team);
+
+    $lines = [];
+    foreach ($team as $m) {
+        $gewerk = trim($m['gewerk']  ?? '');
+        $vor    = trim($m['vorname'] ?? '');
+        $nach   = trim($m['name']    ?? '');
+        $tel    = trim($m['telefon'] ?? '');
+
+        // skip completely empty rows
+        if ($gewerk === '' && $vor === '' && $nach === '' && $tel === '') {
+            continue;
+        }
+
+        // Format: gewerk: Vorname Nachname, Telefon
+        $line = '';
+        if ($gewerk !== '') {
+            $line .= $gewerk . ': ';
+        }
+        $line .= trim($vor . ' ' . $nach);
+
+        if ($tel !== '') {
+            $line .= ', ' . $tel;
+        }
+
+        if ($line !== '') {
+            $lines[] = $line;
+        }
+    }
+
+    $vars['kontakte_team'] = implode("\n", $lines);
 
 
     // Parse using ORT + PROJEKTDETAILS
