@@ -5,7 +5,7 @@ It also enriches each document with **weather forecasts** for the relevant date 
 
 ---
 
-## 🧩 Overview
+## Overview
 
 When a user selects a project/job from the web interface, the app:
 
@@ -19,7 +19,7 @@ When a user selects a project/job from the web interface, the app:
 
 ---
 
-## 🧠 Features
+## Features
 
 | Feature | Description |
 |----------|-------------|
@@ -32,7 +32,7 @@ When a user selects a project/job from the web interface, the app:
 
 ---
 
-## ⚙️ File Structure
+## File Structure
 
 ```
 timeprints_web/
@@ -59,7 +59,7 @@ timeprints_web/
 
 ---
 
-## 🌤️ Weather System
+## Weather System
 
 Implemented in `lib/weather.php`.
 
@@ -81,7 +81,7 @@ Implemented in `lib/weather.php`.
 
 ---
 
-## 🤖 OpenAI Parsing
+## OpenAI Parsing
 
 Implemented in `lib/ai.php`.
 
@@ -94,7 +94,7 @@ Implemented in `lib/ai.php`.
 
 ---
 
-## 🧾 Environment Variables
+## Environment Variables
 
 Set in `.env` or system environment:
 
@@ -106,7 +106,7 @@ Set in `.env` or system environment:
 
 ---
 
-## 🧪 Local Development
+## Local Development
 
 1. **Install dependencies**
 
@@ -131,7 +131,7 @@ Set in `.env` or system environment:
 
 ---
 
-## 🧱 Template Placeholders
+## Template Placeholders
 
 Supported placeholders include (extendable):
 
@@ -145,7 +145,7 @@ Add new `${key}` placeholders to your Word template, and simply populate `$vars[
 
 ---
 
-## 🚀 Error Handling
+## Error Handling
 
 - **OpenAI 503 / network timeout:** Retries automatically; if still failing, placeholders left blank.
 - **Weather API unreachable:** Weather fields blank; generation continues.
@@ -153,13 +153,13 @@ Add new `${key}` placeholders to your Word template, and simply populate `$vars[
 
 ---
 
-## 📄 License
+## License
 
 MIT License — use, adapt, and extend freely.
 
 ---
 
-## ✨ Author
+## Author
 
 **Shachar Heyman**  
 Berlin, Germany  

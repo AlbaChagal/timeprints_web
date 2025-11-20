@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /* ---------- Runtime hardening ---------- */
-ini_set('display_errors', '0');                 // never leak warnings into binary response
+ini_set('display_errors', '1');                 // never leak warnings into binary response
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('zlib.output_compression', '0');        // avoid Safari issues with compressed output
 mb_internal_encoding('UTF-8');
@@ -34,15 +34,30 @@ require_once dirname(__DIR__) . '/lib/weather.php';
 $config = require $ROOT . '/config/config.php';
 
 /* ---------- Input ---------- */
-$projectId = isset($_POST['project_id']) ? (int)$_POST['project_id'] : 0;
-$jobId     = isset($_POST['job_id']) ? (int)$_POST['job_id'] : 0;
-if ($projectId <= 0 || $jobId <= 0) {
+$projectId = filter_input(INPUT_POST, 'project_id', FILTER_VALIDATE_INT) ?: 0;
+$jobId     = filter_input(INPUT_POST, 'job_id', FILTER_VALIDATE_INT) ?: 0;
+$eventId   = filter_input(INPUT_POST, 'event_id', FILTER_VALIDATE_INT) ?: 0;
+
+if ($projectId <= 0 || $jobId <= 0 || $eventId <= 0) {
     http_response_code(400);
     header('Content-Type: text/plain; charset=UTF-8');
     ob_get_length() && ob_end_clean();
     echo "Bad input";
     exit;
 }
+// Access PDO as you already do (Reflection on DB, or your helper)
+$db = new DB($config);
+$pdo = $db->getPdo();
+
+$tableEvents = $cfg['table_events'] ?? 'events';
+
+$st = $pdo->prepare("SELECT * FROM `{$tableEvents}` WHERE id = :id LIMIT 1");
+$st->execute([':id' => $eventId]);
+$event = $st->fetch(PDO::FETCH_ASSOC);
+if (!$event) {
+    throw new RuntimeException('Event nicht gefunden.');
+}
+
 
 // Build a clean ${ort} string from parsed fields, fallback to a sanitized slice of raw
 function buildCleanOrt(array $parsed, string $raw): string {
@@ -97,12 +112,26 @@ try {
         exit;
     }
 
+    // NEW: load event via DB (no Reflection)
+    $event = $db->getEvent($eventId);
+    if (!$event) {
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=UTF-8');
+        ob_get_length() && ob_end_clean();
+        echo "Event nicht gefunden: {$eventId}";
+        exit;
+    }
+
     // latin1 → UTF-8 normalization
     $project = normalize_utf8_array($project);
     $job     = normalize_utf8_array($job);
+    $event   = normalize_utf8_array($event);
+
+    $vars = PlaceholderResolver::resolve($project, $job); // <-- keep this if resolver still takes 2 args
 
     // Base vars from DB
-    $vars = PlaceholderResolver::resolve($project, $job);
+    $vars = PlaceholderResolver::resolve($project, $job, $event);
+
 
     // Parse using ORT + PROJEKTDETAILS
     require_once $ROOT . '/lib/ai.php';
@@ -157,7 +186,8 @@ try {
     $tz = new DateTimeZone('Europe/Berlin');
 
     // Resolve the target date from your vars / DB
-    $whenDateStr = $vars['datum']
+    $whenDateStr = $vars['datum_beginn']
+        ?: $vars['datum']
         ?: (isset($job['datum']) ? date('Y-m-d', strtotime($job['datum'])) : date('Y-m-d'));
 
     $startHHMM = $vars['start'] ?: ($vars['uhrzeit_beginn'] ?? '');

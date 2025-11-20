@@ -5,7 +5,7 @@ declare(strict_types=1);
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Disposition PDF Generator</title>
+<title>Disposition PDF Generator (Event-basiert)</title>
 <style>
 body{font-family:Arial,Helvetica,sans-serif;margin:32px;}
 h1{margin:0 0 12px 0}
@@ -19,7 +19,7 @@ button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;background:#0
 </style>
 </head>
 <body>
-<h1>Disposition erzeugen</h1>
+<h1>Disposition erzeugen (pro Event)</h1>
 
 <form method="post" action="generate.php" id="gen-form">
   <div>
@@ -29,11 +29,19 @@ button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;background:#0
   </div>
 
   <div>
-    <label>Job ID</label>
+    <label>Job (Jobnummer)</label>
     <select name="job_id" id="job_id" required disabled>
       <option value="">— wähle einen Job —</option>
     </select>
     <div id="job_help" class="small">Wird nach Projekt-Auswahl befüllt.</div>
+  </div>
+
+  <div>
+    <label>Event</label>
+    <select name="event_id" id="event_id" required disabled>
+      <option value="">— wähle ein Event —</option>
+    </select>
+    <div id="event_help" class="small">Wird nach Job-Auswahl befüllt.</div>
   </div>
 
   <div>
@@ -50,59 +58,76 @@ button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;background:#0
 
 <script>
 (function(){
-  const pidInput = document.getElementById('project_id');
-  const jobSelect = document.getElementById('job_id');
-  const jobFilter = document.getElementById('job_filter');
-  const submitBtn = document.getElementById('submit_btn');
-  const jobHelp = document.getElementById('job_help');
+  const pidInput   = document.getElementById('project_id');
+  const jobSelect  = document.getElementById('job_id');
+  const eventSelect = document.getElementById('event_id');
+  const jobFilter  = document.getElementById('job_filter');
+  const submitBtn  = document.getElementById('submit_btn');
+  const jobHelp    = document.getElementById('job_help');
+  const eventHelp  = document.getElementById('event_help');
 
-  let cache = [];
   let debounce = null;
+  let cacheJobs = [];
+  let cacheEvents = [];
 
-  function msg(text){ jobHelp.textContent = text; }
-
-  function optionLabel(row){
-    const id = row.id ?? '';
-    const num = row.jobnummer ?? '';
-    const dt  = row.datum ?? '';
-    const beg = row.uhrzeit_beginn ?? '';
-    const end = row.uhrzeit_ende ?? '';
-    const ort = row.ort ?? '';
-    const time = (beg || end) ? (beg + (end ? '–' + end : '')) : '';
-    const mid = [dt, time].filter(Boolean).join(' ');
-    const right = [mid, ort].filter(Boolean).join(' | ');
-    const left  = ['#'+id, num].filter(Boolean).join(' ');
-    return [left, right].filter(Boolean).join('  ·  ');
+  function msg(str){
+    jobHelp.textContent = str;
   }
 
-  function populate(rows){
-  jobSelect.innerHTML = '<option value="">— wähle einen Job —</option>';
-  rows.forEach(r=>{
-    const opt = document.createElement('option');
-    opt.value = r.id;
-    const id  = r.id ?? '';
-    const dt  = r.datum ?? '';
-    const beg = r.uhrzeit_beginn ?? '';
-    const end = r.uhrzeit_ende ?? '';
-    const time = (beg || end) ? (beg + (end ? '–' + end : '')) : '';
-    opt.textContent = `#${id} ${dt} ${time}`.trim();
-    jobSelect.appendChild(opt);
-  });
-  jobSelect.disabled = rows.length === 0;
-  jobFilter.disabled = rows.length === 0;
-  submitBtn.disabled = rows.length === 0 || !jobSelect.value;
+  function resetEvents(){
+    eventSelect.innerHTML = '<option value="">— wähle ein Event —</option>';
+    eventSelect.disabled = true;
+    eventHelp.textContent = 'Wird nach Job-Auswahl befüllt.';
+    submitBtn.disabled = true;
+    cacheEvents = [];
   }
 
+  function populateJobs(rows){
+    jobSelect.innerHTML = '<option value="">— wähle einen Job —</option>';
+    rows.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      const num = (r.jobnummer && r.jobnummer !== '') ? r.jobnummer : ('#' + (r.id ?? ''));
+      const dt  = r.datum ?? '';
+      const beg = r.uhrzeit_beginn ?? '';
+      const end = r.uhrzeit_ende ?? '';
+      const time = (beg || end) ? (beg + (end ? '–' + end : '')) : '';
+      opt.textContent = `${num} ${dt} ${time}`.trim();
+      jobSelect.appendChild(opt);
+    });
+    jobSelect.disabled = rows.length === 0;
+    jobFilter.disabled = rows.length === 0;
+    submitBtn.disabled = true;
+    resetEvents();
+  }
+
+  function populateEvents(rows){
+    eventSelect.innerHTML = '<option value="">— wähle ein Event —</option>';
+    rows.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      const dt  = r.datum_beginn ?? '';
+      const beg = r.uhrzeit_beginn ?? '';
+      const end = r.uhrzeit_ende ?? '';
+      const time = (beg || end) ? (beg + (end ? '–' + end : '')) : '';
+      const art  = r.art ? `(${r.art})` : '';
+      opt.textContent = `${dt} ${time} ${art}`.trim();
+      eventSelect.appendChild(opt);
+    });
+    eventSelect.disabled = rows.length === 0;
+    eventHelp.textContent = rows.length ? 'Event gewählt, dann Disposition generieren.' : 'Keine Events gefunden.';
+    submitBtn.disabled = !eventSelect.value;
+  }
 
   function applyFilter(){
     const q = jobFilter.value.toLowerCase().trim();
-    if(!q){ populate(cache); return; }
-    const rows = cache.filter(r => {
+    if(!q){ populateJobs(cacheJobs); return; }
+    const rows = cacheJobs.filter(r => {
       return [r.id, r.jobnummer, r.datum, r.uhrzeit_beginn, r.uhrzeit_ende, r.ort]
         .map(x => (x==null?'':String(x).toLowerCase()))
         .some(s => s.includes(q));
     });
-    populate(rows);
+    populateJobs(rows);
   }
 
   function fetchJobs(pid){
@@ -110,35 +135,83 @@ button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;background:#0
     jobSelect.disabled = true;
     jobFilter.disabled = true;
     submitBtn.disabled = true;
+    resetEvents();
     msg('Lade…');
 
     fetch('jobs_by_project.php?project_id=' + encodeURIComponent(pid), {credentials:'same-origin'})
-      .then(r => r.json()) // always parse JSON; endpoint always returns JSON
+      .then(r => r.json())
       .then(data => {
-      if (data.error) {
-        console.error('Endpoint error:', data.error, data.tried || []);
-        msg('Fehler: ' + data.error);
-        cache = [];
-        populate(cache);
-        return;
-      }
-      if (data.tried) {
-        const picked = (data.tried.find(x => x.count > 0) || {}).fk || '—';
-        const summary = data.tried.map(x => `${x.fk}:${x.count}`).join(', ');
-        console.log('FK probe:', summary, 'picked:', picked);
-        msg((data.items?.length || 0) ? `Gefundene Jobs: ${data.items.length} (FK=${picked})` : `Keine Jobs gefunden (Probe: ${summary})`);
-      }
-      cache = Array.isArray(data.items) ? data.items : [];
-      populate(cache);
-    })
-;
+        if (data.error) {
+          console.error('Endpoint error:', data.error, data.tried || []);
+          msg('Fehler: ' + data.error);
+          cacheJobs = [];
+          populateJobs(cacheJobs);
+          return;
+        }
+        if (!Array.isArray(data.items)) {
+          console.error('Unerwartete Antwort:', data);
+          msg('Fehlerhafte Antwort vom Server.');
+          cacheJobs = [];
+          populateJobs(cacheJobs);
+          return;
+        }
+        cacheJobs = data.items;
+        msg(data.items.length ? data.items.length + ' Jobs geladen.' : 'Keine Jobs gefunden.');
+        populateJobs(cacheJobs);
+        jobFilter.disabled = data.items.length === 0;
+      })
+      .catch(err => {
+        console.error(err);
+        msg('Fehler beim Laden.');
+        cacheJobs = [];
+        populateJobs(cacheJobs);
+      });
   }
 
-  pidInput.addEventListener('input', () => {
-    const pid = parseInt(pidInput.value, 10);
-    if(!pid || pid <= 0){
-      cache = [];
-      populate(cache);
+  function fetchEvents(jid){
+    resetEvents();
+    if (!jid) return;
+
+    eventSelect.innerHTML = '<option value="">Lade Events…</option>';
+    eventSelect.disabled = true;
+    eventHelp.textContent = 'Lade…';
+    submitBtn.disabled = true;
+
+    fetch('events_by_job.php?job_id=' + encodeURIComponent(jid), {credentials:'same-origin'})
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) {
+          console.error('Endpoint error:', data.error);
+          eventHelp.textContent = 'Fehler: ' + data.error;
+          cacheEvents = [];
+          populateEvents(cacheEvents);
+          return;
+        }
+        if (!Array.isArray(data.items)) {
+          console.error('Unerwartete Antwort:', data);
+          eventHelp.textContent = 'Fehlerhafte Antwort vom Server.';
+          cacheEvents = [];
+          populateEvents(cacheEvents);
+          return;
+        }
+        cacheEvents = data.items;
+        populateEvents(cacheEvents);
+      })
+      .catch(err => {
+        console.error(err);
+        eventHelp.textContent = 'Fehler beim Laden.';
+        cacheEvents = [];
+        populateEvents(cacheEvents);
+      });
+  }
+
+  // Debounced loading when project_id changes
+  pidInput.addEventListener('input', function(){
+    const pid = this.value.trim();
+    if (!pid) {
+      cacheJobs = [];
+      populateJobs(cacheJobs);
+      msg('Projekt-ID eingeben.');
       return;
     }
     clearTimeout(debounce);
@@ -146,7 +219,15 @@ button{padding:10px 16px;border-radius:8px;border:0;cursor:pointer;background:#0
   });
 
   jobFilter.addEventListener('input', applyFilter);
-  jobSelect.addEventListener('change', () => { submitBtn.disabled = !jobSelect.value; });
+
+  jobSelect.addEventListener('change', () => {
+    const jid = jobSelect.value;
+    fetchEvents(jid);
+  });
+
+  eventSelect.addEventListener('change', () => {
+    submitBtn.disabled = !eventSelect.value;
+  });
 })();
 </script>
 </body>

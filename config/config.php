@@ -3,9 +3,9 @@ Time Prints Config
 return [
   'host' => 'projektliste.timeprints.de',
   'port' => 3306,
-  'dbname' => 'YOUR_DB_NAME_HERE',
-  'user' => 'YOUR_USERNAME_HERE',
-  'pass' => 'YOUR_PASSWORD_HERE',
+  'dbname' => 'd01f7d36',
+  'user' => 'd01f7d36',
+  'pass' => '8NaVFGnW9o6oXQcs',
   // DB is stored as latin1 with latin1_german1_ci
   'charset' => 'latin1',
   'collation' => 'latin1_german1_ci',
