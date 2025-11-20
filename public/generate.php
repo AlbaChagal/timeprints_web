@@ -164,6 +164,22 @@ try {
 
     $vars['kontakte_team'] = implode("\n", $lines);
 
+    // ---------- Add Preisabsprachen (raw text from job) ----------
+    $preis = trim((string)($job['preisabsprachen_team'] ?? ''));
+
+    // Fix common mojibake for €
+    if ($preis !== '') {
+        // "â‚¬" or "Ã¢â€šÂ¬" → "€"
+        $preis = str_replace(['â‚¬', 'Ã¢â€šÂ¬'], '€', $preis);
+    }
+
+    if ($preis !== '') {
+        if (!empty($vars['kontakte_team'])) {
+            $vars['kontakte_team'] .= "\n";
+        }
+        // just the details, no label
+        $vars['kontakte_team'] .= $preis;
+    }
 
     // Parse using ORT + PROJEKTDETAILS
     require_once $ROOT . '/lib/ai.php';
